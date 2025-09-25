@@ -26,7 +26,7 @@
 
   <canvas id="drawingCanvas" width="2048" height="2048" style="display:none;"></canvas>
 
-  <a-scene embedded arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false; vrModeUI: false;">
+  <a-scene embedded arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false; vrModeUI: false;" vr-mode-ui="enabled: false" device-orientation-permission-ui="enabled: false">
     <a-marker preset="hiro" id="marker">
       <a-plane id="graffitiPlane" width="6" height="6" material="shader: flat; src:#drawingCanvas;"
         rotation="-90 0 0"></a-plane>
