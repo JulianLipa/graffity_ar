@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Graffo.AR</title>
+
+  <script src="https://aframe.io/releases/1.3.0/aframe.min.js"></script>
+  <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+
+  <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+  <div id="controls">
+    <button id="drawButton">🎨</button>
+    <button id="undoButton">↩️</button>
+    <button id="resetButton">🗑️</button>
+    <input type="color" id="colorPicker" value="#ff0000">
+    <select id="brushSelector">
+      <option value="default" selected>Default</option>
+      <option value="fatcap">Fatcap</option>
+    </select>
+  </div>
+
+  <canvas id="drawingCanvas" width="2048" height="2048" style="display:none;"></canvas>
+
+  <a-scene embedded arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false; vrModeUI: false;">
+    <a-marker preset="hiro" id="marker">
+      <a-plane id="graffitiPlane" width="6" height="6" material="shader: flat; src:#drawingCanvas;"
+        rotation="-90 0 0"></a-plane>
+    </a-marker>
+    <a-entity camera></a-entity>
+  </a-scene>
+
+  <script>
+    window.addEventListener("DOMContentLoaded", () => {
+      const originalSize = 1080; // tamaño original para escala
+      const canvas = document.getElementById("drawingCanvas");
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+
+      const planeEl = document.getElementById("graffitiPlane");
+      const cameraEl = document.querySelector("a-entity[camera]");
+      const markerEl = document.getElementById("marker");
+
+      const backgroundColor = "rgba(0,255,0,0.1)";
+      ctx.fillStyle = backgroundColor;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      let isDrawing = false;
+      let brushColor = document.getElementById("colorPicker").value;
+      let currentBrush = "default";
+      let lastPoint = null;
+
+      let strokes = [];
+      let currentStroke = [];
+
+      // 🎨 UI
+      document.getElementById("colorPicker")
+        .addEventListener("input", (e) => brushColor = e.target.value);
+
+      document.getElementById("brushSelector")
+        .addEventListener("change", (e) => currentBrush = e.target.value);
+
+      document.getElementById("drawButton").addEventListener("mousedown", () => isDrawing = true);
+      document.getElementById("drawButton").addEventListener("mouseup", () => { isDrawing = false; endStroke(); });
+      document.getElementById("drawButton").addEventListener("touchstart", (e) => { e.preventDefault(); isDrawing = true; });
+      document.getElementById("drawButton").addEventListener("touchend", (e) => { e.preventDefault(); isDrawing = false; endStroke(); });
+
+      document.getElementById("resetButton").addEventListener("click", () => {
+        strokes = [];
+        redrawCanvas();
+      });
+
+      document.getElementById("undoButton").addEventListener("click", () => {
+        strokes.pop();
+        redrawCanvas();
+      });
+
+      function endStroke() {
+        if (currentStroke.length > 0) {
+          strokes.push(currentStroke);
+          currentStroke = [];
+        }
+        lastPoint = null;
+      }
+
+      function redrawCanvas() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = backgroundColor;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        const scale = canvas.width / originalSize;
+
+        for (const stroke of strokes) {
+          for (let i = 1; i < stroke.length; i++) {
+            const p1 = stroke[i - 1];
+            const p2 = stroke[i];
+            const p1Scaled = { ...p1, x: p1.x * scale, y: p1.y * scale };
+            const p2Scaled = { ...p2, x: p2.x * scale, y: p2.y * scale };
+            applyBrush(ctx, p1Scaled, p2Scaled, p2.color, p2.brush);
+          }
+        }
+
+        const planeMesh = planeEl.getObject3D("mesh");
+        if (planeMesh?.material?.map) planeMesh.material.map.needsUpdate = true;
+      }
+
+      function applyBrush(ctx, p1, p2, color, brush) {
+        ctx.shadowBlur = 0;
+        ctx.shadowColor = "transparent";
+
+        switch (brush) {
+          case "default":
+          default:
+            ctx.strokeStyle = color;
+            ctx.lineWidth = p2.size * 1.5;
+            ctx.lineCap = "round";
+            ctx.shadowBlur = p2.blur;
+            ctx.shadowColor = color;
+            ctx.beginPath();
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+            ctx.stroke();
+            break;
+
+          case "fatcap":
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1;
+            ctx.lineCap = "round";
+            const dx = p2.x - p1.x;
+            const dy = p2.y - p1.y;
+            ctx.shadowBlur = p2.blur / 1.8;
+            ctx.shadowColor = color;
+            ctx.save();
+            ctx.translate(p2.x, p2.y);
+            ctx.beginPath();
+            ctx.ellipse(0, 0, p2.size * 1.2, p2.size * 0.8, 0, 0, Math.PI * 2);
+            ctx.fillStyle = color;
+            ctx.fill();
+            ctx.restore();
+            break;
+        }
+      }
+
+      function draw() {
+        const camera = cameraEl.getObject3D("camera");
+        const planeMesh = planeEl.getObject3D("mesh");
+        const markerObj = markerEl.object3D;
+        if (!camera || !planeMesh || !markerObj) {
+          lastPoint = null;
+          return;
+        }
+
+        const raycaster = new THREE.Raycaster();
+        const camPos = new THREE.Vector3();
+        camera.getWorldPosition(camPos);
+        const camDir = new THREE.Vector3();
+        camera.getWorldDirection(camDir);
+        raycaster.set(camPos, camDir);
+
+        const intersects = raycaster.intersectObject(planeMesh);
+        if (intersects.length === 0) {
+          lastPoint = null;
+          return;
+        }
+
+        const uv = intersects[0].uv;
+        const x = uv.x * originalSize;
+        const y = (1 - uv.y) * originalSize;
+
+        const markerPos = new THREE.Vector3();
+        markerObj.getWorldPosition(markerPos);
+        let distance = camPos.distanceTo(markerPos);
+
+        if (isDrawing) {
+          const size = Math.max((distance + 1) ** 2 - 60, 5);
+          const blur = Math.max((distance + 1) ** 2 - 100, 5);
+
+          const point = { x, y, color: brushColor, size, blur, brush: currentBrush };
+          currentStroke.push(point);
+
+          if (lastPoint) {
+            const scale = canvas.width / originalSize;
+            const lastScaled = { ...lastPoint, x: lastPoint.x * scale, y: lastPoint.y * scale };
+            const pointScaled = { ...point, x: point.x * scale, y: point.y * scale };
+            applyBrush(ctx, lastScaled, pointScaled, brushColor, currentBrush);
+          } else {
+            ctx.beginPath();
+            ctx.fillStyle = brushColor;
+            if (currentBrush === "default") {
+              ctx.shadowBlur = blur;
+              ctx.shadowColor = brushColor;
+            }
+            const scale = canvas.width / originalSize;
+            ctx.arc(x * scale, y * scale, size / 2, 0, Math.PI * 2);
+            ctx.fill();
+          }
+
+          if (planeMesh.material.map) planeMesh.material.map.needsUpdate = true;
+          lastPoint = point;
+        } else {
+          lastPoint = null;
+        }
+      }
+
+      function animate() {
+        requestAnimationFrame(animate);
+        draw();
+      }
+      animate();
+    });
+  </script>
+</body>
+
+</html>
